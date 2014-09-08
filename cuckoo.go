@@ -1,19 +1,19 @@
-// Copyright 2014 - Utkan Güngördü
-// 
+// Copyright (c) 2014 Utkan Güngördü <utkan@freeconsole.org>
+//
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-// Package cuckoo implements bucketized cuckoo hashing (also known as splash hashing).
+// Package cuckoo implements bucketized cuckoo hashing (also known as splash tables).
 // This implementation uses 4 hash functions and 8 cells per bucket.
 // Greedy algorithm for collision resolution is a random walk.
 package cuckoo
@@ -37,7 +37,7 @@ const (
 	DefaultLogSize = 8           // Initial number of the buckets is 1<<DefaultLogSize
 )
 
-type Key uint32      // Must be an integer-type.
+type Key uint32   // Must be an integer-type.
 type Value uint32 // Can be anything, replace this to match your needs (not using unsafe.Pointer to avoid the overhead to store additional pointer or interface{} which comes with a worse overhead).
 type Hash uint32
 
@@ -59,19 +59,30 @@ type Cuckoo struct {
 	// Thus, zeroindex is the index of the element with 0 key (invalidIndex means no 0 key) (throughout the package "index" means: lower blen bits indicate bucket index, upper bits indicate the bucket number.)
 	zeroindex int
 	// evacuated leftover item
-	eitem bool
-	ekey  Key
-	eval  Value
-	seed  [nhash]Hash // seed for hash functions
+	eitem  bool
+	ekey   Key
+	eval   Value
+	seed   [nhash]Hash // seed for hash functions
+	malloc func(size int) []byte
+}
+
+func defaultMalloc(size int) []byte {
+	return make([]byte, size, size)
 }
 
 // Create a new cuckoo hash table with 2^logsize number of buckets initially.
 // A single bucket can hold blen key/value pairs.
-func NewCuckoo(logsize int) *Cuckoo {
+// malloc is the allocator function which can be set to nil.
+func NewCuckoo(logsize int, malloc func(size int) []byte) *Cuckoo {
+	if malloc == nil {
+		malloc = defaultMalloc
+	}
+
 	c := &Cuckoo{
-		buckets:   make([]bucket, 1<<uint(logsize), 1<<uint(logsize)),
+		buckets:   allocBuckets(malloc, 1<<uint(logsize)),
 		logsize:   logsize,
 		zeroindex: invalidIndex,
+		malloc:    malloc,
 	}
 
 	for i := range c.seed {
@@ -206,7 +217,7 @@ func (c *Cuckoo) tryInsert(k Key, v Value) (inserted bool) {
 func (c *Cuckoo) tryUpdate(k Key, v Value, h [nhash]Hash) (updated bool, availableIndex int) {
 	availableIndex = invalidIndex
 	zeroindex := c.zeroindex
-	
+
 	// TODO(utkan): SSE2/AVX2 version
 
 	for _, hash := range &h {
@@ -319,9 +330,9 @@ func (c *Cuckoo) tryGrow(del int) (ok bool) {
 	if c.logsize > maxLogSize {
 		panic("cuckoo: cannot grow any furher")
 	}
-	c.buckets = make([]bucket, 1<<uint(c.logsize), 1<<uint(c.logsize))
+	c.buckets = allocBuckets(c.malloc, 1<<uint(c.logsize))
 	c.zeroindex = invalidIndex
-	
+
 	// rehash everything; we get better load factors at the expense of CPU time.
 
 	defer func() {

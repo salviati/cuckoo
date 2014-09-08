@@ -16,21 +16,24 @@
 package cuckoo
 
 import (
-	"time"
+	"reflect"
+	"unsafe"
 )
 
-type fastrand struct {
-	x uint32
+var bucketSize = int(unsafe.Sizeof(bucket{}))
+
+func byteToBucketSlice(bytes []byte) (buckets []bucket) {
+	bytesh := (*reflect.SliceHeader)(unsafe.Pointer(&bytes))
+	bucketsh := (*reflect.SliceHeader)(unsafe.Pointer(&buckets))
+
+	bucketsh.Data = bytesh.Data
+	bucketsh.Len = bytesh.Len / bucketSize
+	bucketsh.Cap = bytesh.Cap / bucketSize
+
+	return
 }
 
-func newFastrand() *fastrand {
-	return &fastrand{x: 0x49f6428a + uint32(time.Now().UnixNano())}
-}
-
-// fastrand implementation from runtime package
-func (r *fastrand) next() uint32 {
-	x := r.x
-	x ^= (((x << 1) >> 31) & 0x88888eef) ^ 1
-	r.x = x
-	return x
+func allocBuckets(malloc func(size int) []byte, nbuckets int) []bucket {
+	bytes := malloc(bucketSize * nbuckets)
+	return byteToBucketSlice(bytes)
 }

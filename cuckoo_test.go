@@ -1,15 +1,15 @@
-// Copyright 2014 - Utkan Güngördü
-// 
+// Copyright (c) 2014 Utkan Güngördü <utkan@freeconsole.org>
+//
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
@@ -51,7 +51,7 @@ func init() {
 }
 
 func TestZero(t *testing.T) {
-	c := NewCuckoo(8)
+	c := NewCuckoo(8, nil)
 	var v Value
 
 	for i := 0; i < 10; i++ {
@@ -64,7 +64,7 @@ func TestZero(t *testing.T) {
 }
 
 func TestSimple(t *testing.T) {
-	c := NewCuckoo(22)
+	c := NewCuckoo(22, nil)
 	for k, v := range gmap {
 		c.Insert(k, v)
 	}
@@ -80,12 +80,12 @@ func TestSimple(t *testing.T) {
 			return
 		}
 	}
-	
+
 	t.Log(c.LoadFactor())
 }
 
 func BenchmarkCuckooInsert(b *testing.B) {
-	c := NewCuckoo(22)
+	c := NewCuckoo(22, nil)
 	b.ResetTimer()
 	b.ReportAllocs()
 
@@ -95,7 +95,7 @@ func BenchmarkCuckooInsert(b *testing.B) {
 }
 
 func BenchmarkCuckooSearch(b *testing.B) {
-	c := NewCuckoo(22)
+	c := NewCuckoo(22, nil)
 	for i := 0; i < len(gkeys); i++ {
 		c.Insert(gkeys[i&gmask], gvals[i&gmask])
 	}
