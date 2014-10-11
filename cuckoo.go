@@ -50,8 +50,11 @@ const (
 	invalidHash  = 0xffffffff
 )
 
-type Key uint32   // Must be an integer-type.
-type Value uint32 // Can be anything, replace this to match your needs (not using unsafe.Pointer to avoid the overhead to store additional pointer or interface{} which comes with a worse overhead).
+// Key must be an integer-type.
+type Key uint32
+
+// Value can be anything, replace this to match your needs (not using unsafe.Pointer to avoid the overhead to store additional pointer or interface{} which comes with a worse overhead).
+type Value uint32
 
 type bucket struct {
 	keys [blen]Key
@@ -89,7 +92,7 @@ func init() {
 	}
 }
 
-// Create a new cuckoo hash table with 2^logsize number of buckets initially.
+// NewCuckoo creates a new cuckoo hash table with 2^logsize number of buckets initially.
 // A single bucket can hold blen key/value pairs.
 func NewCuckoo(logsize int) *Cuckoo {
 

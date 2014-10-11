@@ -15,6 +15,7 @@
 
 package cuckoo
 
+// Hash is the internal hash type. Any change in its definition will require defaultHash to be updated.
 type Hash uint32
 
 const (
