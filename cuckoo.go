@@ -11,7 +11,7 @@
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with this program. If not, see http://www.gnu.org/licenses/.
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 // Package cuckoo implements d-ary bucketized cuckoo hashing (bucketized cuckoo hashing is also known as splash tables).
 // This implementation uses configurable number of hash functions and cells per bucket.
@@ -52,7 +52,6 @@ const (
 
 type Key uint32   // Must be an integer-type.
 type Value uint32 // Can be anything, replace this to match your needs (not using unsafe.Pointer to avoid the overhead to store additional pointer or interface{} which comes with a worse overhead).
-type Hash uint32
 
 type bucket struct {
 	keys [blen]Key
@@ -92,7 +91,6 @@ func init() {
 
 // Create a new cuckoo hash table with 2^logsize number of buckets initially.
 // A single bucket can hold blen key/value pairs.
-// alloc is the allocator function which can be set to nil to omit.
 func NewCuckoo(logsize int) *Cuckoo {
 
 	c := &Cuckoo{
@@ -181,6 +179,7 @@ func (c *Cuckoo) Delete(k Key) {
 		b := &c.buckets[int(hash)]
 		for i, key := range &b.keys {
 			if k == key {
+				c.nentries--
 				b.keys[i] = 0
 				return
 			}

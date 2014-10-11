@@ -11,9 +11,11 @@
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with this program. If not, see http://www.gnu.org/licenses/.
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 package cuckoo
+
+type Hash uint32
 
 const (
 	murmur3_c1_32 uint32 = 0xcc9e2d51
