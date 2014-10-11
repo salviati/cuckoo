@@ -25,8 +25,8 @@ var (
 	gkeys   []Key
 	gvals   []Value
 	gmap    map[Key]Value
-	n       = int(3e6)
-	logSize = 19
+	n       = int(2e6)
+	logSize = 21 - bshift
 )
 
 func mkmap(n int) (map[Key]Value, []Key, []Value) {

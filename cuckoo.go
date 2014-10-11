@@ -117,7 +117,7 @@ func (c *Cuckoo) Len() int {
 
 // default hash function
 func defaultHash(k Key, seed Hash) Hash {
-	return Hash(murmur3(uint32(k), uint32(seed)))
+	return Hash(xx(uint32(k), uint32(seed)))
 }
 
 func (c *Cuckoo) hash(key Key, h *[nhash]Hash) {
