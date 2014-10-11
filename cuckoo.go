@@ -105,7 +105,7 @@ func NewCuckoo(logsize int) *Cuckoo {
 }
 
 func (c *Cuckoo) reseed() {
-	for i := range c.seed {
+	for i := range &c.seed {
 		c.seed[i] = Hash(rand.Uint32())
 	}
 }
@@ -120,7 +120,7 @@ func defaultHash(k Key, seed Hash) Hash {
 	return Hash(murmur3(uint32(k), uint32(seed)))
 }
 
-func (c *Cuckoo) hash(key Key) (h [nhash]Hash) {
+func (c *Cuckoo) hash(key Key, h *[nhash]Hash) {
 	mask := Hash((1 << uint(c.logsize)) - 1)
 
 	for i := range h {
@@ -155,7 +155,8 @@ func (c *Cuckoo) Search(k Key) (v Value, ok bool) {
 
 	// TODO(utkan): SSE2/AVX2 version
 
-	h := c.hash(k)
+	var h [nhash]Hash
+	c.hash(k, &h)
 	for _, hash := range &h {
 		b := &c.buckets[int(hash)]
 		for i, key := range &b.keys {
@@ -174,7 +175,8 @@ func (c *Cuckoo) Delete(k Key) {
 		return
 	}
 
-	h := c.hash(k)
+	var h [nhash]Hash
+	c.hash(k, &h)
 	for _, hash := range &h {
 		b := &c.buckets[int(hash)]
 		for i, key := range &b.keys {
@@ -220,10 +222,11 @@ func (c *Cuckoo) Insert(k Key, v Value) {
 
 func (c *Cuckoo) tryInsert(k Key, v Value) (inserted bool) {
 	// check loadFactor and can grow if necessary?
-	h := c.hash(k)
+	var h [nhash]Hash
+	c.hash(k, &h)
 
 	// Are we just updating the value for an existing key?
-	updated, availableIndex := c.tryUpdate(k, v, h)
+	updated, availableIndex := c.tryUpdate(k, v, &h)
 	if updated {
 		return true
 	}
@@ -236,7 +239,7 @@ func (c *Cuckoo) tryInsert(k Key, v Value) (inserted bool) {
 	}
 
 	// Nope again, lets try moving the eggs around.
-	if c.tryGreedyAdd(k, v, h) {
+	if c.tryGreedyAdd(k, v, &h) {
 		c.nentries++
 		return true
 	}
@@ -247,13 +250,13 @@ func (c *Cuckoo) tryInsert(k Key, v Value) (inserted bool) {
 
 // If we already have an element with the the key k, we just update the value.
 // Otherwise, index of an available slot --if exists at all-- is returned.
-func (c *Cuckoo) tryUpdate(k Key, v Value, h [nhash]Hash) (updated bool, availableIndex int) {
+func (c *Cuckoo) tryUpdate(k Key, v Value, h *[nhash]Hash) (updated bool, availableIndex int) {
 	availableIndex = invalidIndex
 	zeroindex := c.zeroindex
 
 	// TODO(utkan): SSE2/AVX2 version
 
-	for _, hash := range &h {
+	for _, hash := range h {
 		bi := int(hash)
 		b := &c.buckets[bi]
 		bucket0 := bi << bshift
@@ -286,10 +289,10 @@ func (c *Cuckoo) addAt(k Key, v Value, index int) {
 // We did tryUpdate, and it turned out that there is no element with key k.
 // Now, see if there's an empty slot we can add key-value into.
 // The array h is accessed in random order.
-func (c *Cuckoo) tryAdd(k Key, v Value, h [nhash]Hash, except Hash) (added bool) {
+func (c *Cuckoo) tryAdd(k Key, v Value, h *[nhash]Hash, except Hash) (added bool) {
 	zeroindex := c.zeroindex
 
-	for _, hash := range &h {
+	for _, hash := range h {
 		if except != invalidHash && except == hash {
 			continue
 		}
@@ -316,14 +319,16 @@ func (c *Cuckoo) tryAdd(k Key, v Value, h [nhash]Hash, except Hash) (added bool)
 
 // tryUpdate and tryAdd both failed. Let's try moving the eggs around.
 // This implementation uses random walk.
-func (c *Cuckoo) tryGreedyAdd(k Key, v Value, h [nhash]Hash) (added bool) {
+func (c *Cuckoo) tryGreedyAdd(k Key, v Value, h *[nhash]Hash) (added bool) {
 	// Expected maximum number of steps is O(log(n)):
 	// Frieze, Alan, Páll Melsted, and Michael Mitzenmacher. "An analysis of random-walk cuckoo hashing." SIAM Journal on Computing 40.2 (2011): 291-308.
 	max := (1 + c.logsize) * randomWalkCoefficient
 
+	var ehash [nhash]Hash
+
 	for step := 0; step < max; step++ {
 		r := rand.Int63() // need nhash*nhashshift + bshift + nhashshift random bits
-		c.shuffle(&h, r)
+		c.shuffle(h, r)
 		r >>= nhash * nhashshift
 		// randomly choose the item to evict
 		i := int(r & bmask)
@@ -333,15 +338,15 @@ func (c *Cuckoo) tryGreedyAdd(k Key, v Value, h [nhash]Hash) (added bool) {
 		ekey, eval := b.keys[i], b.vals[i]
 		b.keys[i], b.vals[i] = k, v
 		// try to put the evicted item back
-		ehash := c.hash(ekey)
-		if c.tryAdd(ekey, eval, ehash, hash) {
+		c.hash(ekey, &ehash)
+		if c.tryAdd(ekey, eval, &ehash, hash) {
 			return true
 		}
 
 		// we're back to where we started, except with a new item.
 		k = ekey
 		v = eval
-		h = ehash
+		*h = ehash
 	}
 
 	c.ekey = k
@@ -396,6 +401,8 @@ func (c *Cuckoo) tryGrow(δ int) (ok bool) {
 		}
 	}()
 
+	var h [nhash]Hash
+
 	for bi := range c.buckets {
 		b := c.buckets[bi]
 		bucket0 := bi << bshift
@@ -405,13 +412,13 @@ func (c *Cuckoo) tryGrow(δ int) (ok bool) {
 			}
 
 			v := b.vals[i]
-			h := cnew.hash(k)
+			cnew.hash(k, &h)
 
-			if cnew.tryAdd(k, v, h, invalidHash) {
+			if cnew.tryAdd(k, v, &h, invalidHash) {
 				continue
 			}
 
-			if ok = cnew.tryGreedyAdd(k, v, h); !ok {
+			if ok = cnew.tryGreedyAdd(k, v, &h); !ok {
 				return
 			}
 		}
