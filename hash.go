@@ -7,17 +7,13 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// along with this program. If not, see http://www.gnu.org/licenses/.
 
 package cuckoo
-
-import (
-	"crypto/rand"
-)
 
 const (
 	murmur3_c1_32 uint32 = 0xcc9e2d51
@@ -71,35 +67,4 @@ func mem(k uint32, seed uint32) uint32 {
 	h ^= (k >> 24 & 0xff) * mem_c1
 
 	return h
-}
-
-var aeskeysched [32]byte
-
-//go:noescape
-
-func aeshash32(k uint32, seed uint32) uint32
-
-//go:noescape
-
-func aeshash32_4(k Key, mask Hash, seed *[4]Hash, h *[4]Hash)
-
-var useaesenc bool
-
-func chkaesenc()
-
-func init() {
-	chkaesenc()
-	if useaesenc == false {
-		return
-	}
-
-	rnd := make([]byte, len(aeskeysched))
-	_, err := rand.Read(rnd)
-	if err != nil {
-		panic(err.Error())
-	}
-
-	for i := range aeskeysched {
-		aeskeysched[i] = rnd[i]
-	}
 }

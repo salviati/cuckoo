@@ -7,11 +7,11 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// along with this program. If not, see http://www.gnu.org/licenses/.
 
 package cuckoo
 
@@ -22,11 +22,11 @@ import (
 )
 
 var (
-	gkeys    []Key
-	gvals    []Value
-	gmap     map[Key]Value
-	glogsize = uint(22)
-	gmask    = (1 << glogsize) - 1
+	gkeys   []Key
+	gvals   []Value
+	gmap    map[Key]Value
+	n       = int(3e6)
+	logSize = 19
 )
 
 func mkmap(n int) (map[Key]Value, []Key, []Value) {
@@ -47,11 +47,11 @@ func mkmap(n int) (map[Key]Value, []Key, []Value) {
 }
 
 func init() {
-	gmap, gkeys, gvals = mkmap(1 << glogsize)
+	gmap, gkeys, gvals = mkmap(n)
 }
 
 func TestZero(t *testing.T) {
-	c := NewCuckoo(8, nil)
+	c := NewCuckoo(logSize)
 	var v Value
 
 	for i := 0; i < 10; i++ {
@@ -64,7 +64,7 @@ func TestZero(t *testing.T) {
 }
 
 func TestSimple(t *testing.T) {
-	c := NewCuckoo(22, nil)
+	c := NewCuckoo(logSize)
 	for k, v := range gmap {
 		c.Insert(k, v)
 	}
@@ -81,29 +81,29 @@ func TestSimple(t *testing.T) {
 		}
 	}
 
-	t.Log(c.LoadFactor())
+	t.Log("LoadFactor:", c.LoadFactor())
 }
 
 func BenchmarkCuckooInsert(b *testing.B) {
-	c := NewCuckoo(22, nil)
+	c := NewCuckoo(logSize)
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		c.Insert(gkeys[i&gmask], gvals[i&gmask])
+		c.Insert(gkeys[i%n], gvals[i%n])
 	}
 }
 
 func BenchmarkCuckooSearch(b *testing.B) {
-	c := NewCuckoo(22, nil)
+	c := NewCuckoo(logSize)
 	for i := 0; i < len(gkeys); i++ {
-		c.Insert(gkeys[i&gmask], gvals[i&gmask])
+		c.Insert(gkeys[i%n], gvals[i%n])
 	}
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		c.Search(gkeys[i&gmask])
+		c.Search(gkeys[i%n])
 	}
 }
 
@@ -113,7 +113,7 @@ func BenchmarkMapInsert(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		m[gkeys[i&gmask]] = gvals[i&gmask]
+		m[gkeys[i%n]] = gvals[i%n]
 	}
 }
 
@@ -121,12 +121,12 @@ func BenchmarkMapSearch(b *testing.B) {
 	m := make(map[Key]Value)
 
 	for i := 0; i < len(gkeys); i++ {
-		m[gkeys[i&gmask]] = gvals[i&gmask]
+		m[gkeys[i%n]] = gvals[i%n]
 	}
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = m[gkeys[i&gmask]]
+		_, _ = m[gkeys[i%n]]
 	}
 }

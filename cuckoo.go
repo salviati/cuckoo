@@ -7,15 +7,17 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// along with this program. If not, see http://www.gnu.org/licenses/.
 
-// Package cuckoo implements bucketized cuckoo hashing (also known as splash tables).
-// This implementation uses 4 hash functions and 8 cells per bucket.
+// Package cuckoo implements d-ary bucketized cuckoo hashing (bucketized cuckoo hashing is also known as splash tables).
+// This implementation uses configurable number of hash functions and cells per bucket.
 // Greedy algorithm for collision resolution is a random walk.
+//
+// This implementation prioritizes memory-efficiency over speed.
 package cuckoo
 
 import (
@@ -23,18 +25,29 @@ import (
 	"runtime"
 )
 
+// configurable variables (for tuning the algorithm)
 const (
-	bshift         = 3 // Number of items in a bucket is 1<<bshift.
-	blen           = 1 << bshift
-	bmask          = blen - 1
-	nhashshift     = 2
-	nhash          = 1 << nhashshift // Number of hash functions. Make sure to change Cuckoo.hash and Cuckoo.shuffle accordingly when you change this.
-	nhashmask      = nhash - 1
-	invalidIndex   = -1
-	invalidHash    = 0xffffffff
-	gc             = true        // triegger GC after every alloc (which happens during grow)
-	maxLogSize     = 32 - bshift // assuming 32-bit keys
-	DefaultLogSize = 8           // Initial number of the buckets is 1<<DefaultLogSize
+	bshift                = 3   // Number of items in a bucket is 1<<bshift.
+	nhashshift            = 3   // Number of hash functions is 1<<nhashshift.
+	shrinkFactor          = 2   // A shrink will be triggered when the load factor goes below 2^(-shrinkFactor).
+	rehashThreshold       = 0.9 // If the load factor is below rehashThreshold, Insert will try to rehash everything before actually growing.
+	randomWalkCoefficient = 1   // A multiplicative coefficient best determined by benchmarks. The optimal value depends on bshift and nhashshift.
+)
+
+// other configurable variables
+const (
+	gc             = false // trigger GC after every alloc (which happens during grow).
+	DefaultLogSize = 8     // Initial number of the buckets is 1<<DefaultLogSize.
+)
+
+const (
+	maxLogSize   = 32 - bshift // (# of bit in Hash type) - bshift. Default assumes 32-bit keys.
+	blen         = 1 << bshift
+	bmask        = blen - 1
+	nhash        = 1 << nhashshift
+	nhashmask    = nhash - 1
+	invalidIndex = -1
+	invalidHash  = 0xffffffff
 )
 
 type Key uint32   // Must be an integer-type.
@@ -49,81 +62,88 @@ type bucket struct {
 // Cuckoo implements a space-efficient map[Key]Value equivalent where Key is an integer and Value can be anything.
 // Similar to built-in maps Cuckoo is not thread-safe. In a parallel environment you may need to wrap access with mutexes.
 type Cuckoo struct {
-	logsize  int // len(buckets) is 1<<logsize
+	logsize  int // len(buckets) is 1<<logsize.
 	buckets  []bucket
 	nentries int
 	ngrow    int
+	nshrink  int
+	nrehash  int
 	// To avoid allocating a bitmap for bucket usage, we use the default value of key (which is 0) to indicate that the entry is not used.
 	// Instead of forbidding items with key==0 (and exposing an implementation quirk to the user), we use an additional
 	// information: a slot is unsed iff buckets[i].keys[j]==0 AND zeroindex is not i<<bshift + j.
-	// Thus, zeroindex is the index of the element with 0 key (invalidIndex means no 0 key) (throughout the package "index" means: lower blen bits indicate bucket index, upper bits indicate the bucket number.)
+	// Thus, zeroindex is the index of the element with 0 key (invalidIndex means no 0 key) (throughout the package "index" means: lower blen bits indicate bucket index, upper bits indicate the bucket number).
 	zeroindex int
-	// evacuated leftover item
-	eitem  bool
-	ekey   Key
-	eval   Value
-	seed   [nhash]Hash // seed for hash functions
-	malloc func(size int) []byte
+	// evacuated leftover item.
+	eitem bool
+	ekey  Key
+	eval  Value
+	seed  [nhash]Hash // seed for hash functions.
 }
 
-func defaultMalloc(size int) []byte {
-	return make([]byte, size, size)
+func alloc(n int) []bucket {
+	return make([]bucket, n, n)
+}
+
+func init() {
+	if nhash*nhashshift+bshift+nhashshift > 63 {
+		panic("tryGreedyAdd needs nhash*nhashshift + bshift + nhashshift bits of random data; either modify tryGreedyAdd or reduce nhash/bshift.")
+	}
 }
 
 // Create a new cuckoo hash table with 2^logsize number of buckets initially.
 // A single bucket can hold blen key/value pairs.
-// malloc is the allocator function which can be set to nil.
-func NewCuckoo(logsize int, malloc func(size int) []byte) *Cuckoo {
-	if malloc == nil {
-		malloc = defaultMalloc
-	}
+// alloc is the allocator function which can be set to nil to omit.
+func NewCuckoo(logsize int) *Cuckoo {
 
 	c := &Cuckoo{
-		buckets:   allocBuckets(malloc, 1<<uint(logsize)),
+		buckets:   alloc(1 << uint(logsize)),
 		logsize:   logsize,
 		zeroindex: invalidIndex,
-		malloc:    malloc,
 	}
 
-	for i := range c.seed {
-		c.seed[i] = Hash(rand.Uint32())
-	}
+	c.reseed()
 
 	return c
 }
 
+func (c *Cuckoo) reseed() {
+	for i := range c.seed {
+		c.seed[i] = Hash(rand.Uint32())
+	}
+}
+
+// Len returns the number of items in the hash map.
 func (c *Cuckoo) Len() int {
 	return c.nentries
+}
+
+// default hash function
+func defaultHash(k Key, seed Hash) Hash {
+	return Hash(murmur3(uint32(k), uint32(seed)))
 }
 
 func (c *Cuckoo) hash(key Key) (h [nhash]Hash) {
 	mask := Hash((1 << uint(c.logsize)) - 1)
 
-	if useaesenc {
-		aeshash32_4(key, mask, &c.seed, &h)
-		return
+	for i := range h {
+		h[i] = defaultHash(key, c.seed[i]) & mask
 	}
-
-	k := Hash(key)
-	h[0] = k & mask
-	h[1] = Hash(murmur3(uint32(k), uint32(c.seed[1]))) & mask
-	h[2] = Hash(xx(uint32(k), uint32(c.seed[2]))) & mask
-	h[3] = Hash(mem(uint32(k), uint32(c.seed[3]))) & mask
 
 	return
 }
 
-func (c *Cuckoo) shuffle(h *[nhash]Hash) {
+// uses lowest nhash*nhashshift bits of r.
+func (c *Cuckoo) shuffle(h *[nhash]Hash, r int64) {
 	// Fisher-Yates shuffle
-	r := rand.Uint32()
-	i := int(r & 3)
-	h[3], h[i] = h[i], h[3]
-	i = int((r >> 2) % 3)
-	h[2], h[i] = h[i], h[2]
-	i = int((r >> 4) & 2)
-	h[1], h[i] = h[i], h[1]
+	for j := nhash - 1; j > 0; j-- {
+		i := int(r&nhashmask) % (j + 1)
+		h[i], h[j] = h[j], h[i]
+		r >>= nhashshift
+	}
 }
 
+// Search tries to retrieve the value associated with the given key.
+// If no such item is found, ok is set to false.
 func (c *Cuckoo) Search(k Key) (v Value, ok bool) {
 	if k == 0 {
 		if c.zeroindex == invalidIndex {
@@ -149,6 +169,7 @@ func (c *Cuckoo) Search(k Key) (v Value, ok bool) {
 	return
 }
 
+// Delete removes the item corresponding to the given key (if exists).
 func (c *Cuckoo) Delete(k Key) {
 	if k == 0 {
 		c.zeroindex = invalidIndex
@@ -166,18 +187,31 @@ func (c *Cuckoo) Delete(k Key) {
 		}
 	}
 
-	// TODO(utkan): shrink?
+	if 1<<uint(c.logsize+bshift-shrinkFactor) > c.nentries {
+		for i := shrinkFactor; i > 0; i-- {
+			if c.tryGrow(-i) {
+				break
+			}
+		}
+	}
 
 	return
 }
 
+// Insert adds given key/value item into the hash map.
+// If an item with key k already exists, it will be replaced.
 func (c *Cuckoo) Insert(k Key, v Value) {
 	for {
 		if c.tryInsert(k, v) {
 			return
 		}
 
-		for i := 1; ; i++ {
+		i0 := 1
+		if c.LoadFactor() < rehashThreshold {
+			i0 = 0
+		}
+
+		for i := i0; ; i++ {
 			if ok := c.tryGrow(i); ok {
 				break
 			}
@@ -286,11 +320,12 @@ func (c *Cuckoo) tryAdd(k Key, v Value, h [nhash]Hash, except Hash) (added bool)
 func (c *Cuckoo) tryGreedyAdd(k Key, v Value, h [nhash]Hash) (added bool) {
 	// Expected maximum number of steps is O(log(n)):
 	// Frieze, Alan, Páll Melsted, and Michael Mitzenmacher. "An analysis of random-walk cuckoo hashing." SIAM Journal on Computing 40.2 (2011): 291-308.
-	max := (1 + c.logsize)
+	max := (1 + c.logsize) * randomWalkCoefficient
 
 	for step := 0; step < max; step++ {
-		c.shuffle(&h) //
-		r := rand.Uint32()
+		r := rand.Int63() // need nhash*nhashshift + bshift + nhashshift random bits
+		c.shuffle(&h, r)
+		r >>= nhash * nhashshift
 		// randomly choose the item to evict
 		i := int(r & bmask)
 		d := int((r >> bshift) & nhashmask)
@@ -316,65 +351,78 @@ func (c *Cuckoo) tryGreedyAdd(k Key, v Value, h [nhash]Hash) (added bool) {
 	return false
 }
 
+// LoadFactor returns the load factor of the hash table, which is the
+// ratio of the used cells to the allocated cells.
 func (c *Cuckoo) LoadFactor() float64 {
 	return float64(c.nentries) / float64(len(c.buckets)<<bshift)
 }
 
-func (c *Cuckoo) tryGrow(del int) (ok bool) {
-	c.ngrow++
+// Tries to grow the hash table by a factor of 2^δ.
+func (c *Cuckoo) tryGrow(δ int) (ok bool) {
+	// NOTE(utkan): reads during grow are OK.
+	cnew := &Cuckoo{}
+	*cnew = *c
+	cnew.reseed()
 
-	oldBuckets := c.buckets
-	oldZeroindex := c.zeroindex
+	if δ == 0 {
+		cnew.nrehash++
+	}
 
-	c.logsize += del
-	if c.logsize > maxLogSize {
+	if δ > 0 {
+		cnew.ngrow++
+	}
+
+	if δ < 0 {
+		cnew.nshrink++
+	}
+
+	cnew.logsize += δ
+	if cnew.logsize > maxLogSize {
 		panic("cuckoo: cannot grow any furher")
 	}
-	c.buckets = allocBuckets(c.malloc, 1<<uint(c.logsize))
-	c.zeroindex = invalidIndex
+	cnew.buckets = alloc(1 << uint(cnew.logsize))
+	cnew.zeroindex = invalidIndex
 
 	// rehash everything; we get better load factors at the expense of CPU time.
 
 	defer func() {
-		if !ok {
-			c.logsize -= del
-			c.buckets = oldBuckets
-			c.zeroindex = oldZeroindex
-		} else {
-			oldBuckets = nil
+		if ok {
+			*c = *cnew
 		}
+
+		cnew = nil
 
 		if gc {
 			runtime.GC()
 		}
 	}()
 
-	for bi := range oldBuckets {
-		b := &oldBuckets[bi]
+	for bi := range c.buckets {
+		b := c.buckets[bi]
 		bucket0 := bi << bshift
 		for i, k := range &b.keys {
-			if k == 0 && oldZeroindex != bucket0+i {
+			if k == 0 && c.zeroindex != bucket0+i {
 				continue
 			}
 
 			v := b.vals[i]
-			h := c.hash(k)
+			h := cnew.hash(k)
 
-			if c.tryAdd(k, v, h, invalidHash) {
+			if cnew.tryAdd(k, v, h, invalidHash) {
 				continue
 			}
 
-			if ok = c.tryGreedyAdd(k, v, h); !ok {
+			if ok = cnew.tryGreedyAdd(k, v, h); !ok {
 				return
 			}
 		}
 	}
 
-	if c.eitem {
-		if ok = c.tryInsert(c.ekey, c.eval); !ok {
+	if cnew.eitem {
+		if ok = cnew.tryInsert(cnew.ekey, cnew.eval); !ok {
 			return
 		}
-		c.eitem = false
+		cnew.eitem = false
 	}
 
 	ok = true
