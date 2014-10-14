@@ -16,7 +16,7 @@
 package cuckoo
 
 // Hash is the internal hash type. Any change in its definition will require defaultHash to be updated.
-type Hash uint32
+type hash uint32
 
 const (
 	murmur3_c1_32 uint32 = 0xcc9e2d51

@@ -36,8 +36,8 @@ const (
 
 // other configurable variables
 const (
-	gc             = false // trigger GC after every alloc (which happens during grow).
-	DefaultLogSize = 8     // Initial number of the buckets is 1<<DefaultLogSize.
+	gc             = false      // trigger GC after every alloc (which happens during grow).
+	DefaultLogSize = 8 + bshift // Initial number of the buckets is 1<<DefaultLogSize.
 )
 
 const (
@@ -61,7 +61,7 @@ type bucket struct {
 	vals [blen]Value
 }
 
-// Cuckoo implements a space-efficient map[Key]Value equivalent where Key is an integer and Value can be anything.
+// Cuckoo implements a memory-efficient map[Key]Value equivalent where Key is an integer and Value can be anything.
 // Similar to built-in maps Cuckoo is not thread-safe. In a parallel environment you may need to wrap access with mutexes.
 type Cuckoo struct {
 	logsize  int // len(buckets) is 1<<logsize.
@@ -79,7 +79,7 @@ type Cuckoo struct {
 	eitem bool
 	ekey  Key
 	eval  Value
-	seed  [nhash]Hash // seed for hash functions.
+	seed  [nhash]hash // seed for hash functions.
 }
 
 func alloc(n int) []bucket {
@@ -88,13 +88,17 @@ func alloc(n int) []bucket {
 
 func init() {
 	if nhash*nhashshift+bshift+nhashshift > 63 {
-		panic("tryGreedyAdd needs nhash*nhashshift + bshift + nhashshift bits of random data; either modify tryGreedyAdd or reduce nhash/bshift.")
+		panic("cuckoo: tryGreedyAdd needs nhash*nhashshift + bshift + nhashshift bits of random data; either modify tryGreedyAdd or reduce nhash/bshift.")
 	}
 }
 
-// NewCuckoo creates a new cuckoo hash table with 2^logsize number of buckets initially.
-// A single bucket can hold blen key/value pairs.
+// NewCuckoo creates a new cuckoo hash table with 2^logsize number of key/value cells initially.
 func NewCuckoo(logsize int) *Cuckoo {
+	if logsize <= bshift {
+		panic("cuckoo: logsize is too small")
+	}
+
+	logsize -= bshift
 
 	c := &Cuckoo{
 		buckets:   alloc(1 << uint(logsize)),
@@ -109,7 +113,7 @@ func NewCuckoo(logsize int) *Cuckoo {
 
 func (c *Cuckoo) reseed() {
 	for i := range &c.seed {
-		c.seed[i] = Hash(rand.Uint32())
+		c.seed[i] = hash(rand.Uint32())
 	}
 }
 
@@ -119,12 +123,12 @@ func (c *Cuckoo) Len() int {
 }
 
 // default hash function
-func defaultHash(k Key, seed Hash) Hash {
-	return Hash(xx(uint32(k), uint32(seed)))
+func defaultHash(k Key, seed hash) hash {
+	return hash(xx(uint32(k), uint32(seed)))
 }
 
-func (c *Cuckoo) hash(key Key, h *[nhash]Hash) {
-	mask := Hash((1 << uint(c.logsize)) - 1)
+func (c *Cuckoo) dohash(key Key, h *[nhash]hash) {
+	mask := hash((1 << uint(c.logsize)) - 1)
 
 	for i := range h {
 		h[i] = defaultHash(key, c.seed[i]) & mask
@@ -134,7 +138,7 @@ func (c *Cuckoo) hash(key Key, h *[nhash]Hash) {
 }
 
 // uses lowest nhash*nhashshift bits of r.
-func (c *Cuckoo) shuffle(h *[nhash]Hash, r int64) {
+func (c *Cuckoo) shuffle(h *[nhash]hash, r int64) {
 	// Fisher-Yates shuffle
 	for j := nhash - 1; j > 0; j-- {
 		i := int(r&nhashmask) % (j + 1)
@@ -158,10 +162,10 @@ func (c *Cuckoo) Search(k Key) (v Value, ok bool) {
 
 	// TODO(utkan): SSE2/AVX2 version
 
-	var h [nhash]Hash
-	c.hash(k, &h)
-	for _, hash := range &h {
-		b := &c.buckets[int(hash)]
+	var h [nhash]hash
+	c.dohash(k, &h)
+	for _, hval := range &h {
+		b := &c.buckets[int(hval)]
 		for i, key := range &b.keys {
 			if k == key {
 				return b.vals[i], true
@@ -178,10 +182,10 @@ func (c *Cuckoo) Delete(k Key) {
 		return
 	}
 
-	var h [nhash]Hash
-	c.hash(k, &h)
-	for _, hash := range &h {
-		b := &c.buckets[int(hash)]
+	var h [nhash]hash
+	c.dohash(k, &h)
+	for _, hval := range &h {
+		b := &c.buckets[int(hval)]
 		for i, key := range &b.keys {
 			if k == key {
 				c.nentries--
@@ -224,9 +228,8 @@ func (c *Cuckoo) Insert(k Key, v Value) {
 }
 
 func (c *Cuckoo) tryInsert(k Key, v Value) (inserted bool) {
-	// check loadFactor and can grow if necessary?
-	var h [nhash]Hash
-	c.hash(k, &h)
+	var h [nhash]hash
+	c.dohash(k, &h)
 
 	// Are we just updating the value for an existing key?
 	updated, availableIndex := c.tryUpdate(k, v, &h)
@@ -253,14 +256,14 @@ func (c *Cuckoo) tryInsert(k Key, v Value) (inserted bool) {
 
 // If we already have an element with the the key k, we just update the value.
 // Otherwise, index of an available slot --if exists at all-- is returned.
-func (c *Cuckoo) tryUpdate(k Key, v Value, h *[nhash]Hash) (updated bool, availableIndex int) {
+func (c *Cuckoo) tryUpdate(k Key, v Value, h *[nhash]hash) (updated bool, availableIndex int) {
 	availableIndex = invalidIndex
 	zeroindex := c.zeroindex
 
 	// TODO(utkan): SSE2/AVX2 version
 
-	for _, hash := range h {
-		bi := int(hash)
+	for _, hval := range h {
+		bi := int(hval)
 		b := &c.buckets[bi]
 		bucket0 := bi << bshift
 
@@ -292,15 +295,15 @@ func (c *Cuckoo) addAt(k Key, v Value, index int) {
 // We did tryUpdate, and it turned out that there is no element with key k.
 // Now, see if there's an empty slot we can add key-value into.
 // The array h is accessed in random order.
-func (c *Cuckoo) tryAdd(k Key, v Value, h *[nhash]Hash, except Hash) (added bool) {
+func (c *Cuckoo) tryAdd(k Key, v Value, h *[nhash]hash, except hash) (added bool) {
 	zeroindex := c.zeroindex
 
-	for _, hash := range h {
-		if except != invalidHash && except == hash {
+	for _, hval := range h {
+		if except != invalidHash && except == hval {
 			continue
 		}
 
-		bi := int(hash)
+		bi := int(hval)
 		b := &c.buckets[bi]
 		bucket0 := bi << bshift
 
@@ -322,12 +325,12 @@ func (c *Cuckoo) tryAdd(k Key, v Value, h *[nhash]Hash, except Hash) (added bool
 
 // tryUpdate and tryAdd both failed. Let's try moving the eggs around.
 // This implementation uses random walk.
-func (c *Cuckoo) tryGreedyAdd(k Key, v Value, h *[nhash]Hash) (added bool) {
+func (c *Cuckoo) tryGreedyAdd(k Key, v Value, h *[nhash]hash) (added bool) {
 	// Expected maximum number of steps is O(log(n)):
 	// Frieze, Alan, Páll Melsted, and Michael Mitzenmacher. "An analysis of random-walk cuckoo hashing." SIAM Journal on Computing 40.2 (2011): 291-308.
 	max := (1 + c.logsize) * randomWalkCoefficient
 
-	var ehash [nhash]Hash
+	var ehash [nhash]hash
 
 	for step := 0; step < max; step++ {
 		r := rand.Int63() // need nhash*nhashshift + bshift + nhashshift random bits
@@ -336,13 +339,13 @@ func (c *Cuckoo) tryGreedyAdd(k Key, v Value, h *[nhash]Hash) (added bool) {
 		// randomly choose the item to evict
 		i := int(r & bmask)
 		d := int((r >> bshift) & nhashmask)
-		hash := h[d]
-		b := &c.buckets[int(hash)]
+		hval := h[d]
+		b := &c.buckets[int(hval)]
 		ekey, eval := b.keys[i], b.vals[i]
 		b.keys[i], b.vals[i] = k, v
 		// try to put the evicted item back
-		c.hash(ekey, &ehash)
-		if c.tryAdd(ekey, eval, &ehash, hash) {
+		c.dohash(ekey, &ehash)
+		if c.tryAdd(ekey, eval, &ehash, hval) {
 			return true
 		}
 
@@ -404,7 +407,7 @@ func (c *Cuckoo) tryGrow(δ int) (ok bool) {
 		}
 	}()
 
-	var h [nhash]Hash
+	var h [nhash]hash
 
 	for bi := range c.buckets {
 		b := c.buckets[bi]
@@ -415,7 +418,7 @@ func (c *Cuckoo) tryGrow(δ int) (ok bool) {
 			}
 
 			v := b.vals[i]
-			cnew.hash(k, &h)
+			cnew.dohash(k, &h)
 
 			if cnew.tryAdd(k, v, &h, invalidHash) {
 				continue
