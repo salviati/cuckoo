@@ -18,6 +18,7 @@ package cuckoo
 import (
 	"math/rand"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -29,13 +30,23 @@ var (
 	logSize = 21
 )
 
-func mkmap(n int) (map[Key]Value, []Key, []Value) {
-	m := make(map[Key]Value)
+var (
+	mapBytes    uint64
+	cuckooBytes uint64
+)
+
+func mkmap(n int) (map[Key]Value, []Key, []Value, uint64) {
+
 	keys := make([]Key, n, n)
 	vals := make([]Value, n, n)
 
 	var v Value
 
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	before := ms.Alloc
+
+	m := make(map[Key]Value)
 	for i := 0; i < n; i++ {
 		k := Key(rand.Uint32())
 		m[k] = v
@@ -43,11 +54,14 @@ func mkmap(n int) (map[Key]Value, []Key, []Value) {
 		vals[i] = v
 	}
 
-	return m, keys, vals
+	runtime.ReadMemStats(&ms)
+	after := ms.Alloc
+
+	return m, keys, vals, after - before
 }
 
 func init() {
-	gmap, gkeys, gvals = mkmap(n)
+	gmap, gkeys, gvals, mapBytes = mkmap(n)
 }
 
 func TestZero(t *testing.T) {
@@ -64,10 +78,20 @@ func TestZero(t *testing.T) {
 }
 
 func TestSimple(t *testing.T) {
+	var ms runtime.MemStats
+
+	runtime.ReadMemStats(&ms)
+	before := ms.Alloc
+
 	c := NewCuckoo(logSize)
 	for k, v := range gmap {
 		c.Insert(k, v)
 	}
+
+	runtime.ReadMemStats(&ms)
+	after := ms.Alloc
+
+	cuckooBytes = after - before
 
 	for k, v := range gmap {
 		cv, ok := c.Search(k)
@@ -82,6 +106,8 @@ func TestSimple(t *testing.T) {
 	}
 
 	t.Log("LoadFactor:", c.LoadFactor())
+	t.Log("Bultin-in map memory usage (MiB):", float64(mapBytes)/float64(1<<20))
+	t.Log("Cuckoo hash memory usage (MiB):", float64(cuckooBytes)/float64(1<<20))
 }
 
 func BenchmarkCuckooInsert(b *testing.B) {
