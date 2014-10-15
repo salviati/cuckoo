@@ -18,16 +18,16 @@ Benchmark results on linux/amd64 with i7-4770S (2M uint32 Key/Value insertion):
 	=== RUN TestZero
 	--- PASS: TestZero (0.00 seconds)
 	=== RUN TestSimple
-	--- PASS: TestSimple (1.44 seconds)
+	--- PASS: TestSimple (1.40 seconds)
 			cuckoo_test.go:108: LoadFactor: 0.9534401893615723
-			cuckoo_test.go:109: Bultin-in map memory usage (MiB): 75.07521057128906
-			cuckoo_test.go:110: Cuckoo hash memory usage (MiB): 16.0001220703125
+			cuckoo_test.go:109: Built-in map memory usage (MiB): 75.04325866699219
+			cuckoo_test.go:110: Cuckoo hash  memory usage (MiB): 16.0001220703125
 	PASS
-	BenchmarkCuckooInsert    5000000               226 ns/op               0 B/op          0 allocs/op
-	BenchmarkCuckooSearch   20000000               125 ns/op               0 B/op          0 allocs/op
-	BenchmarkMapInsert      10000000               132 ns/op               9 B/op          0 allocs/op
-	BenchmarkMapSearch      50000000                84.6 ns/op             0 B/op          0 allocs/op
-	ok      github.com/salviati/cuckoo      17.480s
+	BenchmarkCuckooInsert    5000000               225 ns/op               0 B/op          0 allocs/op
+	BenchmarkCuckooSearch   20000000               124 ns/op               0 B/op          0 allocs/op
+	BenchmarkMapInsert      10000000               126 ns/op               9 B/op          0 allocs/op
+	BenchmarkMapSearch      50000000                79.6 ns/op             0 B/op          0 allocs/op
+	ok      github.com/salviati/cuckoo      16.939s
 
 ## Usage
 After cloning the repository, modify the definitions of `Key` and `Value` types to fit your needs. For optimal performance, you should also experiment with the fine-grade parameters of the algorithm listed at the top of `cuckoo.go`.
