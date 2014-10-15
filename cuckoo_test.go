@@ -106,8 +106,8 @@ func TestSimple(t *testing.T) {
 	}
 
 	t.Log("LoadFactor:", c.LoadFactor())
-	t.Log("Bultin-in map memory usage (MiB):", float64(mapBytes)/float64(1<<20))
-	t.Log("Cuckoo hash memory usage (MiB):", float64(cuckooBytes)/float64(1<<20))
+	t.Log("Built-in map memory usage (MiB):", float64(mapBytes)/float64(1<<20))
+	t.Log("Cuckoo hash  memory usage (MiB):", float64(cuckooBytes)/float64(1<<20))
 }
 
 func BenchmarkCuckooInsert(b *testing.B) {
