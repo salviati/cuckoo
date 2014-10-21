@@ -37,17 +37,14 @@ const (
 // other configurable variables
 const (
 	gc             = false      // trigger GC after every alloc (which happens during grow).
-	DefaultLogSize = 8 + bshift // Initial number of the buckets is 1<<DefaultLogSize.
+	DefaultLogSize = 8 + bshift // A reasonable logsize value for NewCuckoo for use when the number of items to be inserted is not known ahead.
 )
 
 const (
-	maxLogSize   = 32 - bshift // (# of bit in Hash type) - bshift. Default assumes 32-bit keys.
-	blen         = 1 << bshift
-	bmask        = blen - 1
-	nhash        = 1 << nhashshift
-	nhashmask    = nhash - 1
-	invalidIndex = -1
-	invalidHash  = 0xffffffff
+	blen      = 1 << bshift
+	bmask     = blen - 1
+	nhash     = 1 << nhashshift
+	nhashmask = nhash - 1
 )
 
 // Key must be an integer-type.
@@ -71,16 +68,18 @@ type Cuckoo struct {
 	nshrink  int
 	nrehash  int
 	// To avoid allocating a bitmap for bucket usage, we use the default value of key (which is 0) to indicate that the entry is not used.
-	// Instead of forbidding items with key==0 (and exposing an implementation quirk to the user), we use an additional
-	// information: a slot is unsed iff buckets[i].keys[j]==0 AND zeroindex is not i<<bshift + j.
-	// Thus, zeroindex is the index of the element with 0 key (invalidIndex means no 0 key) (throughout the package "index" means: lower blen bits indicate bucket index, upper bits indicate the bucket number).
-	zeroindex int
+	// Instead of forbidding items with key==0 (and exposing an implementation quirk to the user), we use zeroValue and zeroIsSet to store
+	// an item with 0 key. Hence, there is no key/value with key==0 within buckets and any bucket with key==0 is empty.
+	zeroValue Value // Value of the item with Key==0 is placed here.
+	zeroIsSet bool  // true if there is an item with Key==0.
 	// evacuated leftover item.
 	eitem bool
 	ekey  Key
 	eval  Value
 	seed  [nhash]hash // seed for hash functions.
 }
+
+var zero Value
 
 func alloc(n int) []bucket {
 	return make([]bucket, n, n)
@@ -90,20 +89,31 @@ func init() {
 	if nhash*nhashshift+bshift+nhashshift > 63 {
 		panic("cuckoo: tryGreedyAdd needs nhash*nhashshift + bshift + nhashshift bits of random data; either modify tryGreedyAdd or reduce nhash/bshift.")
 	}
+
+	if nhashshift > 8 {
+		panic("cuckoo: nhashshift is too large. either modify Cuckoo.shuffle or reduce nhashshift.")
+	}
 }
 
 // NewCuckoo creates a new cuckoo hash table with 2^logsize number of key/value cells initially.
+//
+// If you can estimate the number of unique items n (unique here refers to keys, not values) you are going to insert,
+// choosing a proper logsize [which is math.Ceil(math.Log2(n))] here is strongly advised.
+// Doing so will avoid grows, which are computationally expensive and require allocation.
 func NewCuckoo(logsize int) *Cuckoo {
-	if logsize <= bshift {
-		panic("cuckoo: logsize is too small")
-	}
-
 	logsize -= bshift
 
+	if logsize <= 0 {
+		logsize = 1
+	}
+
+	if logsize > hashBits {
+		panic("cuckoo: log size is too")
+	}
+
 	c := &Cuckoo{
-		buckets:   alloc(1 << uint(logsize)),
-		logsize:   logsize,
-		zeroindex: invalidIndex,
+		buckets: alloc(1 << uint(logsize)),
+		logsize: logsize,
 	}
 
 	c.reseed()
@@ -124,7 +134,7 @@ func (c *Cuckoo) Len() int {
 
 // default hash function
 func defaultHash(k Key, seed hash) hash {
-	return hash(xx(uint32(k), uint32(seed)))
+	return hash(xx_32(uint32(k), uint32(seed)))
 }
 
 func (c *Cuckoo) dohash(key Key, h *[nhash]hash) {
@@ -141,7 +151,7 @@ func (c *Cuckoo) dohash(key Key, h *[nhash]hash) {
 func (c *Cuckoo) shuffle(h *[nhash]hash, r int64) {
 	// Fisher-Yates shuffle
 	for j := nhash - 1; j > 0; j-- {
-		i := int(r&nhashmask) % (j + 1)
+		i := int(uint8(r&nhashmask) % uint8(j+1)) // we assume nhashshift <= 8 here (some archs lack div instruction).
 		h[i], h[j] = h[j], h[i]
 		r >>= nhashshift
 	}
@@ -151,13 +161,11 @@ func (c *Cuckoo) shuffle(h *[nhash]hash, r int64) {
 // If no such item is found, ok is set to false.
 func (c *Cuckoo) Search(k Key) (v Value, ok bool) {
 	if k == 0 {
-		if c.zeroindex == invalidIndex {
+		if c.zeroIsSet == false {
 			return
 		}
 
-		bi := c.zeroindex >> bshift
-		i := c.zeroindex & bmask
-		return c.buckets[bi].vals[i], true
+		return c.zeroValue, true
 	}
 
 	// TODO(utkan): SSE2/AVX2 version
@@ -178,7 +186,8 @@ func (c *Cuckoo) Search(k Key) (v Value, ok bool) {
 // Delete removes the item corresponding to the given key (if exists).
 func (c *Cuckoo) Delete(k Key) {
 	if k == 0 {
-		c.zeroindex = invalidIndex
+		c.zeroIsSet = false
+		c.zeroValue = zero
 		return
 	}
 
@@ -190,7 +199,8 @@ func (c *Cuckoo) Delete(k Key) {
 			if k == key {
 				c.nentries--
 				b.keys[i] = 0
-				return
+				b.vals[i] = zero
+				break
 			}
 		}
 	}
@@ -209,6 +219,12 @@ func (c *Cuckoo) Delete(k Key) {
 // Insert adds given key/value item into the hash map.
 // If an item with key k already exists, it will be replaced.
 func (c *Cuckoo) Insert(k Key, v Value) {
+	if k == 0 {
+		c.zeroIsSet = true
+		c.zeroValue = v
+		return
+	}
+
 	for {
 		if c.tryInsert(k, v) {
 			return
@@ -232,14 +248,14 @@ func (c *Cuckoo) tryInsert(k Key, v Value) (inserted bool) {
 	c.dohash(k, &h)
 
 	// Are we just updating the value for an existing key?
-	updated, availableIndex := c.tryUpdate(k, v, &h)
+	updated, freeSlot, ibucket, index := c.tryUpdate(k, v, &h)
 	if updated {
 		return true
 	}
 
 	// Nope, do we have an empty slot?
-	if availableIndex != invalidIndex {
-		c.addAt(k, v, availableIndex)
+	if freeSlot {
+		c.addAt(k, v, ibucket, index)
 		c.nentries++
 		return true
 	}
@@ -256,65 +272,57 @@ func (c *Cuckoo) tryInsert(k Key, v Value) (inserted bool) {
 
 // If we already have an element with the the key k, we just update the value.
 // Otherwise, index of an available slot --if exists at all-- is returned.
-func (c *Cuckoo) tryUpdate(k Key, v Value, h *[nhash]hash) (updated bool, availableIndex int) {
-	availableIndex = invalidIndex
-	zeroindex := c.zeroindex
-
+func (c *Cuckoo) tryUpdate(k Key, v Value, h *[nhash]hash) (updated bool, freeSlot bool, ibucket int, index int) {
 	// TODO(utkan): SSE2/AVX2 version
 
-	for _, hval := range h {
-		bi := int(hval)
-		b := &c.buckets[bi]
-		bucket0 := bi << bshift
+	for _, bi := range h {
+		b := &c.buckets[int(bi)]
 
 		for i, key := range &b.keys {
 			if k == key {
-				if k == 0 {
-					c.zeroindex = (bi << bshift) + i
-				}
 				b.vals[i] = v
 				updated = true
 				return
 			}
 
-			if availableIndex == invalidIndex && key == 0 && (zeroindex == invalidIndex || zeroindex != bucket0+i) {
-				availableIndex = bucket0 + i
+			if freeSlot == false && key == 0 {
+				ibucket = int(bi)
+				index = i
+				freeSlot = true
 			}
 		}
 	}
 	return
 }
 
-func (c *Cuckoo) addAt(k Key, v Value, index int) {
-	b := &c.buckets[index>>bshift]
-	i := index & bmask
-	b.keys[i] = k
-	b.vals[i] = v
+func (c *Cuckoo) addAt(k Key, v Value, ibucket int, index int) {
+	b := &c.buckets[ibucket]
+	b.keys[index] = k
+	b.vals[index] = v
 }
 
-// We did tryUpdate, and it turned out that there is no element with key k.
-// Now, see if there's an empty slot we can add key-value into.
-// The array h is accessed in random order.
-func (c *Cuckoo) tryAdd(k Key, v Value, h *[nhash]hash, except hash) (added bool) {
-	zeroindex := c.zeroindex
+// Used by tryGrow and tryGreedyAdd.
+// Similar to tryUpdate, but tryAdd assumes there is no item with key already.
+// tryAdd also omits the slot given by the parameter except, when ignore is set to true.
+func (c *Cuckoo) tryAdd(k Key, v Value, h *[nhash]hash, ignore bool, except hash) (added bool) {
+	if k == 0 {
+		c.zeroIsSet = true
+		c.zeroValue = v
+		return
+	}
 
 	for _, hval := range h {
-		if except != invalidHash && except == hval {
+		if ignore && except == hval {
 			continue
 		}
 
 		bi := int(hval)
 		b := &c.buckets[bi]
-		bucket0 := bi << bshift
 
 		for i, key := range &b.keys {
-			if key == 0 && (zeroindex == invalidIndex || zeroindex != bucket0+i) { // is this an empty slot? zeroindex == invalidIndex may help with branch prediction.
+			if key == 0 {
 				b.keys[i] = k
 				b.vals[i] = v
-
-				if k == 0 {
-					c.zeroindex = bucket0 + i
-				}
 
 				return true
 			}
@@ -345,7 +353,7 @@ func (c *Cuckoo) tryGreedyAdd(k Key, v Value, h *[nhash]hash) (added bool) {
 		b.keys[i], b.vals[i] = k, v
 		// try to put the evicted item back
 		c.dohash(ekey, &ehash)
-		if c.tryAdd(ekey, eval, &ehash, hval) {
+		if c.tryAdd(ekey, eval, &ehash, true, hval) {
 			return true
 		}
 
@@ -387,11 +395,10 @@ func (c *Cuckoo) tryGrow(δ int) (ok bool) {
 	}
 
 	cnew.logsize += δ
-	if cnew.logsize > maxLogSize {
+	if cnew.logsize > hashBits {
 		panic("cuckoo: cannot grow any furher")
 	}
 	cnew.buckets = alloc(1 << uint(cnew.logsize))
-	cnew.zeroindex = invalidIndex
 
 	// rehash everything; we get better load factors at the expense of CPU time.
 
@@ -411,16 +418,15 @@ func (c *Cuckoo) tryGrow(δ int) (ok bool) {
 
 	for bi := range c.buckets {
 		b := c.buckets[bi]
-		bucket0 := bi << bshift
 		for i, k := range &b.keys {
-			if k == 0 && c.zeroindex != bucket0+i {
+			if k == 0 {
 				continue
 			}
 
 			v := b.vals[i]
 			cnew.dohash(k, &h)
 
-			if cnew.tryAdd(k, v, &h, invalidHash) {
+			if cnew.tryAdd(k, v, &h, false, 0) {
 				continue
 			}
 

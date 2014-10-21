@@ -16,18 +16,20 @@
 package cuckoo
 
 import (
+	"math"
 	"math/rand"
 	"reflect"
 	"runtime"
 	"testing"
 )
 
+var n = int(2e6)
+
 var (
 	gkeys   []Key
 	gvals   []Value
 	gmap    map[Key]Value
-	n       = int(2e6)
-	logSize = 21
+	logSize = int(math.Ceil(math.Log2(float64(n))))
 )
 
 var (
@@ -83,7 +85,7 @@ func TestSimple(t *testing.T) {
 	runtime.ReadMemStats(&ms)
 	before := ms.Alloc
 
-	c := NewCuckoo(logSize)
+	c := NewCuckoo(DefaultLogSize)
 	for k, v := range gmap {
 		c.Insert(k, v)
 	}
@@ -101,6 +103,32 @@ func TestSimple(t *testing.T) {
 		}
 		if reflect.DeepEqual(cv, v) == false {
 			t.Error("got: ", cv, " expected: ", v)
+			return
+		}
+	}
+
+	if c.Len() != len(gmap) {
+		t.Error("got: ", c.Len(), " expected: ", len(gmap))
+		return
+	}
+
+	ndeleted := 0
+	maxdelete := len(gmap) * 95 / 100
+	for k := range gmap {
+		if ndeleted >= maxdelete {
+			break
+		}
+
+		c.Delete(k)
+		if v, ok := c.Search(k); ok == true {
+			t.Error("got: ", v)
+			return
+		}
+
+		ndeleted++
+
+		if c.Len() != len(gmap)-ndeleted {
+			t.Error("got: ", c.Len(), " expected: ", len(gmap)-ndeleted)
 			return
 		}
 	}

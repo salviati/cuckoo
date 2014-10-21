@@ -15,8 +15,10 @@
 
 package cuckoo
 
-// Hash is the internal hash type. Any change in its definition will require defaultHash to be updated.
+// Hash is the internal hash type. Any change in its definition will require overall changes in this file.
 type hash uint32
+
+const hashBits = 32 // # of bits in hash type.
 
 const (
 	murmur3_c1_32 uint32 = 0xcc9e2d51
@@ -36,7 +38,7 @@ const (
 	mem_c1 = 3267000013
 )
 
-func murmur3(k uint32, seed uint32) uint32 {
+func murmur3_32(k uint32, seed uint32) uint32 {
 	k *= murmur3_c1_32
 	k = (k << 15) | (k >> (32 - 15))
 	k *= murmur3_c2_32
@@ -49,7 +51,7 @@ func murmur3(k uint32, seed uint32) uint32 {
 	return h
 }
 
-func xx(k uint32, seed uint32) uint32 {
+func xx_32(k uint32, seed uint32) uint32 {
 	h := seed + xx_prime32_5
 	h += k * xx_prime32_3
 	h = ((h << 17) | (h >> (32 - 17))) * xx_prime32_4
@@ -62,7 +64,7 @@ func xx(k uint32, seed uint32) uint32 {
 	return h
 }
 
-func mem(k uint32, seed uint32) uint32 {
+func mem_32(k uint32, seed uint32) uint32 {
 	h := k ^ mem_c0
 	h ^= (k & 0xff) * mem_c1
 	h ^= (k >> 8 & 0xff) * mem_c1
