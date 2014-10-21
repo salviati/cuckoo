@@ -29,7 +29,7 @@ var (
 	gkeys   []Key
 	gvals   []Value
 	gmap    map[Key]Value
-	logSize = int(math.Ceil(math.Log2(float64(n))))
+	logsize = int(math.Ceil(math.Log2(float64(n))))
 )
 
 var (
@@ -67,7 +67,7 @@ func init() {
 }
 
 func TestZero(t *testing.T) {
-	c := NewCuckoo(logSize)
+	c := NewCuckoo(logsize)
 	var v Value
 
 	for i := 0; i < 10; i++ {
@@ -80,20 +80,10 @@ func TestZero(t *testing.T) {
 }
 
 func TestSimple(t *testing.T) {
-	var ms runtime.MemStats
-
-	runtime.ReadMemStats(&ms)
-	before := ms.Alloc
-
 	c := NewCuckoo(DefaultLogSize)
 	for k, v := range gmap {
 		c.Insert(k, v)
 	}
-
-	runtime.ReadMemStats(&ms)
-	after := ms.Alloc
-
-	cuckooBytes = after - before
 
 	for k, v := range gmap {
 		cv, ok := c.Search(k)
@@ -132,6 +122,23 @@ func TestSimple(t *testing.T) {
 			return
 		}
 	}
+}
+
+func TestMem(t *testing.T) {
+	var ms runtime.MemStats
+
+	runtime.ReadMemStats(&ms)
+	before := ms.Alloc
+
+	c := NewCuckoo(logsize)
+	for k, v := range gmap {
+		c.Insert(k, v)
+	}
+
+	runtime.ReadMemStats(&ms)
+	after := ms.Alloc
+
+	cuckooBytes = after - before
 
 	t.Log("LoadFactor:", c.LoadFactor())
 	t.Log("Built-in map memory usage (MiB):", float64(mapBytes)/float64(1<<20))
@@ -139,7 +146,7 @@ func TestSimple(t *testing.T) {
 }
 
 func BenchmarkCuckooInsert(b *testing.B) {
-	c := NewCuckoo(logSize)
+	c := NewCuckoo(logsize)
 	b.ResetTimer()
 	b.ReportAllocs()
 
@@ -149,7 +156,7 @@ func BenchmarkCuckooInsert(b *testing.B) {
 }
 
 func BenchmarkCuckooSearch(b *testing.B) {
-	c := NewCuckoo(logSize)
+	c := NewCuckoo(logsize)
 	for i := 0; i < len(gkeys); i++ {
 		c.Insert(gkeys[i%n], gvals[i%n])
 	}
