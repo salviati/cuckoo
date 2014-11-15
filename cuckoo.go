@@ -25,34 +25,6 @@ import (
 	"runtime"
 )
 
-// configurable variables (for tuning the algorithm)
-const (
-	bshift                = 3   // Number of items in a bucket is 1<<bshift.
-	nhashshift            = 3   // Number of hash functions is 1<<nhashshift.
-	shrinkFactor          = 2   // A shrink will be triggered when the load factor goes below 2^(-shrinkFactor).
-	rehashThreshold       = 0.9 // If the load factor is below rehashThreshold, Insert will try to rehash everything before actually growing.
-	randomWalkCoefficient = 1   // A multiplicative coefficient best determined by benchmarks. The optimal value depends on bshift and nhashshift.
-)
-
-// other configurable variables
-const (
-	gc             = false      // trigger GC after every alloc (which happens during grow).
-	DefaultLogSize = 8 + bshift // A reasonable logsize value for NewCuckoo for use when the number of items to be inserted is not known ahead.
-)
-
-const (
-	blen      = 1 << bshift
-	bmask     = blen - 1
-	nhash     = 1 << nhashshift
-	nhashmask = nhash - 1
-)
-
-// Key must be an integer-type.
-type Key uint32
-
-// Value can be anything, replace this to match your needs (not using unsafe.Pointer to avoid the overhead to store additional pointer or interface{} which comes with a worse overhead).
-type Value uint32
-
 type bucket struct {
 	keys [blen]Key
 	vals [blen]Value
@@ -86,6 +58,7 @@ func alloc(n int) []bucket {
 }
 
 func init() {
+	// ensures the sanity of the config
 	if nhash*nhashshift+bshift+nhashshift > 63 {
 		panic("cuckoo: tryGreedyAdd needs nhash*nhashshift + bshift + nhashshift bits of random data; either modify tryGreedyAdd or reduce nhash/bshift.")
 	}
