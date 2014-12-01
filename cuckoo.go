@@ -25,6 +25,13 @@ import (
 	"runtime"
 )
 
+const (
+	blen      = 1 << bshift
+	bmask     = blen - 1
+	nhash     = 1 << nhashshift
+	nhashmask = nhash - 1
+)
+
 type bucket struct {
 	keys [blen]Key
 	vals [blen]Value

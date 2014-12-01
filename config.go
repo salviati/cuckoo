@@ -13,11 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-// Package cuckoo implements d-ary bucketized cuckoo hashing (bucketized cuckoo hashing is also known as splash tables).
-// This implementation uses configurable number of hash functions and cells per bucket.
-// Greedy algorithm for collision resolution is a random walk.
-//
-// This implementation prioritizes memory-efficiency over speed.
 package cuckoo
 
 // configurable variables (for tuning the algorithm)
@@ -33,13 +28,6 @@ const (
 const (
 	gc             = false      // trigger GC after every alloc (which happens during grow).
 	DefaultLogSize = 8 + bshift // A reasonable logsize value for NewCuckoo for use when the number of items to be inserted is not known ahead.
-)
-
-const (
-	blen      = 1 << bshift
-	bmask     = blen - 1
-	nhash     = 1 << nhashshift
-	nhashmask = nhash - 1
 )
 
 // Key must be an integer-type.
