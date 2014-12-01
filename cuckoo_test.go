@@ -37,16 +37,20 @@ var (
 	cuckooBytes uint64
 )
 
+func readAlloc() uint64 {
+	runtime.GC()
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	return ms.Alloc
+}
+
 func mkmap(n int) (map[Key]Value, []Key, []Value, uint64) {
 
 	keys := make([]Key, n, n)
 	vals := make([]Value, n, n)
 
 	var v Value
-
-	var ms runtime.MemStats
-	runtime.ReadMemStats(&ms)
-	before := ms.Alloc
+	before := readAlloc()
 
 	m := make(map[Key]Value)
 	for i := 0; i < n; i++ {
@@ -56,8 +60,7 @@ func mkmap(n int) (map[Key]Value, []Key, []Value, uint64) {
 		vals[i] = v
 	}
 
-	runtime.ReadMemStats(&ms)
-	after := ms.Alloc
+	after := readAlloc()
 
 	return m, keys, vals, after - before
 }
@@ -125,18 +128,14 @@ func TestSimple(t *testing.T) {
 }
 
 func TestMem(t *testing.T) {
-	var ms runtime.MemStats
-
-	runtime.ReadMemStats(&ms)
-	before := ms.Alloc
+	before := readAlloc()
 
 	c := NewCuckoo(logsize)
 	for k, v := range gmap {
 		c.Insert(k, v)
 	}
 
-	runtime.ReadMemStats(&ms)
-	after := ms.Alloc
+	after := readAlloc()
 
 	cuckooBytes = after - before
 
