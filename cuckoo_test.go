@@ -23,7 +23,7 @@ import (
 	"testing"
 )
 
-var n = int(2e6)
+var n = int(2e6) // close enough to a power of 2, to test whether the LoadFactor is close to 1 or not.
 
 var (
 	gkeys   []Key
@@ -37,8 +37,12 @@ var (
 	cuckooBytes uint64
 )
 
+var (
+	mbench map[Key]Value
+	cbench *Cuckoo
+)
+
 func readAlloc() uint64 {
-	runtime.GC()
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	return ms.Alloc
@@ -50,6 +54,7 @@ func mkmap(n int) (map[Key]Value, []Key, []Value, uint64) {
 	vals := make([]Value, n, n)
 
 	var v Value
+	runtime.GC()
 	before := readAlloc()
 
 	m := make(map[Key]Value)
@@ -128,6 +133,7 @@ func TestSimple(t *testing.T) {
 }
 
 func TestMem(t *testing.T) {
+	runtime.GC()
 	before := readAlloc()
 
 	c := NewCuckoo(logsize)
@@ -145,48 +151,57 @@ func TestMem(t *testing.T) {
 }
 
 func BenchmarkCuckooInsert(b *testing.B) {
-	c := NewCuckoo(logsize)
-	b.ResetTimer()
+	cbench = NewCuckoo(logsize)
 	b.ReportAllocs()
+	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		c.Insert(gkeys[i%n], gvals[i%n])
+		cbench.Insert(gkeys[i%n], gvals[i%n])
 	}
 }
 
 func BenchmarkCuckooSearch(b *testing.B) {
-	c := NewCuckoo(logsize)
-	for i := 0; i < len(gkeys); i++ {
-		c.Insert(gkeys[i%n], gvals[i%n])
-	}
-	b.ResetTimer()
 	b.ReportAllocs()
+	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		c.Search(gkeys[i%n])
+		cbench.Search(gkeys[i%n])
+	}
+}
+
+func BenchmarkCuckooDelete(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		cbench.Delete(gkeys[i%n])
 	}
 }
 
 func BenchmarkMapInsert(b *testing.B) {
-	m := make(map[Key]Value)
-	b.ResetTimer()
+	mbench = make(map[Key]Value)
 	b.ReportAllocs()
+	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		m[gkeys[i%n]] = gvals[i%n]
+		mbench[gkeys[i%n]] = gvals[i%n]
 	}
 }
 
 func BenchmarkMapSearch(b *testing.B) {
-	m := make(map[Key]Value)
-
-	for i := 0; i < len(gkeys); i++ {
-		m[gkeys[i%n]] = gvals[i%n]
-	}
-	b.ResetTimer()
 	b.ReportAllocs()
+	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = m[gkeys[i%n]]
+		_, _ = mbench[gkeys[i%n]]
+	}
+}
+
+func BenchmarkMapDelete(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		delete(mbench, gkeys[i%n])
 	}
 }

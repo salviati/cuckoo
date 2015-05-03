@@ -18,10 +18,10 @@ package cuckoo
 // configurable variables (for tuning the algorithm)
 const (
 	bshift                = 3   // Number of items in a bucket is 1<<bshift.
-	nhashshift            = 3   // Number of hash functions is 1<<nhashshift.
-	shrinkFactor          = 2   // A shrink will be triggered when the load factor goes below 2^(-shrinkFactor).
+	nhashshift            = 2   // Number of hash functions is 1<<nhashshift. (With SSE2, we can do 4 at once).
+	shrinkFactor          = 0   // A shrink will be triggered when the load factor goes below 2^(-shrinkFactor). Setting this to 0 will disable shrinking and avoid potential new allocations.
 	rehashThreshold       = 0.9 // If the load factor is below rehashThreshold, Insert will try to rehash everything before actually growing.
-	randomWalkCoefficient = 1   // A multiplicative coefficient best determined by benchmarks. The optimal value depends on bshift and nhashshift.
+	randomWalkCoefficient = 2   // A multiplicative coefficient best determined by benchmarks. The optimal value depends on bshift and nhashshift.
 )
 
 // other configurable variables

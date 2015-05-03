@@ -186,6 +186,7 @@ func (c *Cuckoo) Delete(k Key) {
 	}
 
 	if 1<<uint(c.logsize+bshift-shrinkFactor) > c.nentries {
+		// TODO(utkan): depending on the current load factorm starting from shrinkFactor-1 may be better.
 		for i := shrinkFactor; i > 0; i-- {
 			if c.tryGrow(-i) {
 				break
@@ -371,6 +372,9 @@ func (c *Cuckoo) tryGrow(δ int) (ok bool) {
 	}
 
 	if δ < 0 {
+		if cnew.logsize <= 8 {
+			return
+		}
 		cnew.nshrink++
 	}
 
