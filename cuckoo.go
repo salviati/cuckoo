@@ -430,3 +430,19 @@ func (c *Cuckoo) tryGrow(δ int) (ok bool) {
 	ok = true
 	return
 }
+
+// ForRange loops over all (key,value) pairs in the hash map and call f for each.
+func (c *Cuckoo) ForRange(f func(Key, Value)) {
+	if c.zeroIsSet {
+		f(0, c.zeroValue)
+	}
+
+	for bi := range c.buckets {
+		b := &c.buckets[bi]
+		for i, k := range &b.keys {
+			if k != 0 {
+				f(k, b.vals[i])
+			}
+		}
+	}
+}
