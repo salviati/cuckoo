@@ -1,4 +1,4 @@
-// Copyright (c) 2014 Utkan Güngördü <utkan@freeconsole.org>
+// Copyright (c) 2014-2015 Utkan Güngördü <utkan@freeconsole.org>
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by

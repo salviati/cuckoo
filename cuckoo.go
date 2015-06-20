@@ -1,4 +1,4 @@
-// Copyright (c) 2014 Utkan Güngördü <utkan@freeconsole.org>
+// Copyright (c) 2014-2015 Utkan Güngördü <utkan@freeconsole.org>
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,11 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-// Package cuckoo implements d-ary bucketized cuckoo hashing (bucketized cuckoo hashing is also known as splash tables).
+// Package cuckoo implements d-ary bucketized cuckoo hashing with stash (bucketized cuckoo hashing is also known as splash tables).
 // This implementation uses configurable number of hash functions and cells per bucket.
 // Greedy algorithm for collision resolution is a random walk.
-//
-// This implementation prioritizes memory-efficiency over speed.
 package cuckoo
 
 import (
@@ -37,6 +35,11 @@ type bucket struct {
 	vals [blen]Value
 }
 
+type stash struct {
+	keys [stashSize]Key
+	vals [stashSize]Value
+}
+
 // Cuckoo implements a memory-efficient map[Key]Value equivalent where Key is an integer and Value can be anything.
 // Similar to built-in maps Cuckoo is not thread-safe. In a parallel environment you may need to wrap access with mutexes.
 type Cuckoo struct {
@@ -51,11 +54,11 @@ type Cuckoo struct {
 	// an item with 0 key. Hence, there is no key/value with key==0 within buckets and any bucket with key==0 is empty.
 	zeroValue Value // Value of the item with Key==0 is placed here.
 	zeroIsSet bool  // true if there is an item with Key==0.
-	// evacuated leftover item.
-	eitem bool
-	ekey  Key
-	eval  Value
-	seed  [nhash]hash // seed for hash functions.
+	stash     stash // stash, Insert's last resort before doing a grow
+	eitem     bool  // evacuated leftover item,
+	ekey      Key   // ...and its key.
+	eval      Value
+	seed      [nhash]hash // seed for hash functions.
 }
 
 var zero Value
@@ -160,15 +163,38 @@ func (c *Cuckoo) Search(k Key) (v Value, ok bool) {
 			}
 		}
 	}
+
+	for i, key := range c.stash.keys {
+		if key == k {
+			return c.stash.vals[i], true
+		}
+	}
+
 	return
 }
 
 // Delete removes the item corresponding to the given key (if exists).
 func (c *Cuckoo) Delete(k Key) {
+	if c.tryDelete(k) == false {
+		return
+	}
+
+	if 1<<uint(c.logsize+bshift-shrinkFactor) > c.nentries {
+		// TODO(utkan): depending on the current load factorm starting from shrinkFactor-1 may be better.
+		for i := shrinkFactor; i > 0; i-- {
+			if c.tryGrow(-i) {
+				break
+			}
+		}
+	}
+}
+
+func (c *Cuckoo) tryDelete(k Key) bool {
 	if k == 0 {
 		c.zeroIsSet = false
 		c.zeroValue = zero
-		return
+		c.nentries--
+		return true
 	}
 
 	var h [nhash]hash
@@ -180,21 +206,21 @@ func (c *Cuckoo) Delete(k Key) {
 				c.nentries--
 				b.keys[i] = 0
 				b.vals[i] = zero
-				break
+				return true
 			}
 		}
 	}
 
-	if 1<<uint(c.logsize+bshift-shrinkFactor) > c.nentries {
-		// TODO(utkan): depending on the current load factorm starting from shrinkFactor-1 may be better.
-		for i := shrinkFactor; i > 0; i-- {
-			if c.tryGrow(-i) {
-				break
-			}
+	for i, key := range c.stash.keys {
+		if k == key {
+			c.stash.keys[i] = 0
+			c.stash.vals[i] = zero
+			c.nentries--
+			return true
 		}
 	}
 
-	return
+	return false
 }
 
 // Insert adds given key/value item into the hash map.
@@ -203,6 +229,7 @@ func (c *Cuckoo) Insert(k Key, v Value) {
 	if k == 0 {
 		c.zeroIsSet = true
 		c.zeroValue = v
+		c.nentries++
 		return
 	}
 
@@ -273,6 +300,15 @@ func (c *Cuckoo) tryUpdate(k Key, v Value, h *[nhash]hash) (updated bool, freeSl
 			}
 		}
 	}
+
+	for i, key := range c.stash.keys {
+		if k == key {
+			c.stash.vals[i] = v
+			updated = true
+			return
+		}
+	}
+
 	return
 }
 
@@ -342,6 +378,15 @@ func (c *Cuckoo) tryGreedyAdd(k Key, v Value, h *[nhash]hash) (added bool) {
 		k = ekey
 		v = eval
 		*h = ehash
+	}
+
+	// try to insert into stash as a last resort
+	for i, key := range c.stash.keys {
+		if key == 0 {
+			c.stash.keys[i] = k
+			c.stash.vals[i] = v
+			return true
+		}
 	}
 
 	c.ekey = k
@@ -431,7 +476,7 @@ func (c *Cuckoo) tryGrow(δ int) (ok bool) {
 	return
 }
 
-// ForRange loops over all (key,value) pairs in the hash map and call f for each.
+// ForRange loops over all (key,value) pairs in the hash map and calls f for each.
 func (c *Cuckoo) ForRange(f func(Key, Value)) {
 	if c.zeroIsSet {
 		f(0, c.zeroValue)
@@ -439,10 +484,16 @@ func (c *Cuckoo) ForRange(f func(Key, Value)) {
 
 	for bi := range c.buckets {
 		b := &c.buckets[bi]
-		for i, k := range &b.keys {
-			if k != 0 {
-				f(k, b.vals[i])
+		for i, key := range &b.keys {
+			if key != 0 {
+				f(key, b.vals[i])
 			}
+		}
+	}
+
+	for i, key := range c.stash.keys {
+		if key != 0 {
+			f(key, c.stash.vals[i])
 		}
 	}
 }

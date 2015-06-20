@@ -1,11 +1,9 @@
 # cuckoo
 <img src="http://upload.wikimedia.org/wikipedia/commons/thumb/1/16/NeomorphusSalviniSmit.jpg/220px-NeomorphusSalviniSmit.jpg"></img>
 
-Package `cuckoo` implements d-ary bucketized [cuckoo hashing](http://en.wikipedia.org/wiki/Cuckoo_hashing) (bucketized cuckoo hashing is also known as splash tables).
+Package `cuckoo` implements d-ary bucketized [cuckoo hashing](http://en.wikipedia.org/wiki/Cuckoo_hashing) with stash (bucketized cuckoo hashing is also known as splash tables).
 This implementation uses configurable number of hash functions and cells per bucket.
 Greedy algorithm for collision resolution is a random walk.
-
-This implementation prioritizes memory-efficiency over speed.
 
 ## Purpose
 Cuckoo is a memory-efficient alternative to the built-in `map[Key]Value` type (where Key is an integer type and Value can be any type) with zero per-item overhead.
