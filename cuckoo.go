@@ -83,6 +83,8 @@ func init() {
 // If you can estimate the number of unique items n (unique here refers to keys, not values) you are going to insert,
 // choosing a proper logsize [which is math.Ceil(math.Log2(n))] here is strongly advised.
 // Doing so will avoid grows, which are computationally expensive and require allocation.
+
+// Logsize mustn't exceed hashBits, defined in hash.go.
 func NewCuckoo(logsize int) *Cuckoo {
 	logsize -= bshift
 
@@ -91,7 +93,7 @@ func NewCuckoo(logsize int) *Cuckoo {
 	}
 
 	if logsize > hashBits {
-		panic("cuckoo: log size is too")
+		panic("cuckoo: log size is too large")
 	}
 
 	c := &Cuckoo{
