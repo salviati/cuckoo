@@ -15,10 +15,7 @@
 
 package cuckoo
 
-// Hash is the internal hash type. Any change in its definition will require overall changes in this file.
-type hash uint32
-
-const hashBits = 32 // # of bits in hash type, at most unsafe.Sizeof(Key)*8.
+type hashFunc func(k uint32, seed uint32) uint32
 
 const (
 	murmur3_c1_32 uint32 = 0xcc9e2d51
