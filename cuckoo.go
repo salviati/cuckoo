@@ -16,105 +16,144 @@
 package cuckoo
 
 import (
-	"errors"
+	"container/list"
+	"fmt"
 	"math"
 	"math/rand"
 )
 
-type bucket [stashSize]interface{}
+type bucket struct {
+	node  interface{}
+	stash *list.List
+}
 
 type CuckooFilter struct {
 	Filter     map[uint32]*bucket
 	Seed       uint32
 	cycleCount byte
+	hasher     [3]hashFunc
 }
 
-func NewCuckooFilter(dataSize int) *CuckooFilter {
-	return &CuckooFilter{
+// NewCuckooFilter creates a new cuckoo filter, if seed == 0, then will generate a new seed
+// if you want to use your own hash function, you can pass it, otherwise it will use default functions
+func NewCuckooFilter(dataSize int, seed uint32, hasher [3]hashFunc) *CuckooFilter {
+	cuckoo := &CuckooFilter{
 		Filter: make(map[uint32]*bucket, int(math.Ceil(float64(dataSize)*growParameter))),
-		Seed:   rand.Uint32(),
 	}
+	if seed != 0 {
+		cuckoo.Seed = seed
+	}
+	if hasher[0] == nil {
+		hasher[0] = murmur3_32
+	}
+	if hasher[1] == nil {
+		hasher[1] = xx_32
+	}
+	if hasher[2] == nil {
+		hasher[2] = mem_32
+	}
+	cuckoo.hasher = hasher
+	return cuckoo
 }
 
-// ReSeed the rand generator
+// ReSeed the rand generator, if seed == 0, then generate a random number instead
 func (cf *CuckooFilter) ReSeed(seed uint32) {
-	cf.Seed = seed
+	if seed != 0 {
+		cf.Seed = seed
+		return
+	}
+	cf.Seed = rand.Uint32()
 }
 
 // Insert data into Filter
-func (cf *CuckooFilter) Insert(data interface{}) error {
+func (cf *CuckooFilter) Insert(data interface{}) bool {
 	cf.cycleCount += 1
-	key, err := convert(data)
-	if err != nil {
-		return err
+	key, ok := convert(data)
+	if !ok {
+		return false
 	}
-	if _, ok := cf.insert(data, key, murmur3_32); ok {
-		return nil
+	if _, ok := cf.insert(data, key, cf.hasher[0]); ok {
+		return true
 	}
-	if _, ok := cf.insert(data, key, xx_32); ok {
-		return nil
+	if _, ok := cf.insert(data, key, cf.hasher[1]); ok {
+		return true
 	}
-	if val, ok := cf.insert(data, key, mem_32); ok {
-		return nil
+	if val, ok := cf.insert(data, key, cf.hasher[2]); ok {
+		return true
 	} else if cf.cycleCount < 3 {
-		kicked := val[0]
-		if err := deleteElement(val, 0); err != nil {
-			return err
-		}
-		val[0] = data
+		kicked := val.node
+		deleteElement(val, kicked)
+		val.node = data
 		return cf.Insert(kicked)
 	}
-	return errors.New("need or more hash more stash")
+	return false
 }
 
 // Delete data from Filter
-func (cf *CuckooFilter) Delete(data interface{}) error {
-	key, err := convert(data)
-	if err != nil {
-		return err
+func (cf *CuckooFilter) Delete(data interface{}) bool {
+	key, ok := convert(data)
+	if !ok {
+		return false
 	}
-	if err := cf.delete(data, key, murmur3_32); err == nil {
-		return nil
-	} else if err := cf.delete(data, key, xx_32); err == nil {
-		return nil
+	if ok := cf.delete(data, key, murmur3_32); ok {
+		return true
+	} else if ok := cf.delete(data, key, xx_32); ok {
+		return true
 	} else {
 		return cf.delete(data, key, mem_32)
 	}
 }
 
 // SearchAll possible buckets given a certain data
-func (cf *CuckooFilter) SearchAll(data interface{}) ([]uint32, error) {
-	key, err := convert(data)
-	if err != nil {
-		return nil, err
+func (cf *CuckooFilter) SearchAll(data interface{}) ([]uint32, bool) {
+	key, ok := convert(data)
+	if !ok {
+		return nil, false
 	}
-	return []uint32{murmur3_32(key, cf.Seed), xx_32(key, cf.Seed), mem_32(key, cf.Seed)}, nil
+	return []uint32{murmur3_32(key, cf.Seed), xx_32(key, cf.Seed), mem_32(key, cf.Seed)}, true
 }
 
 func (cf *CuckooFilter) insert(data interface{}, key uint32, hasher hashFunc) (*bucket, bool) {
 	try := hasher(key, cf.Seed)
 	if val, ok := cf.Filter[try]; !ok {
-		cf.Filter[try] = &bucket{data}
+		cf.Filter[try] = &bucket{
+			node:  data,
+			stash: list.New(),
+		}
 		cf.cycleCount = 0
 		return val, true
-	} else if val[0] == nil || (cf.cycleCount == 3 && val[stashSize-1] == nil) {
-		if err := arrayAppend(val, data, cf); err == nil {
-			return val, true
-		} else {
-			return nil, false
-		}
+	} else if val.node == nil {
+		val.node = data
+		cf.cycleCount = 0
+		return val, true
+	} else if cf.cycleCount == 3 {
+		return val, stashAppend(val, data, cf)
 	}
-	return &bucket{}, false
+	return cf.Filter[try], false
 }
 
-func (cf *CuckooFilter) delete(data interface{}, key uint32, hasher hashFunc) error {
+func (cf *CuckooFilter) delete(data interface{}, key uint32, hasher hashFunc) bool {
 	input := hasher(key, cf.Seed)
 	if val, ok := cf.Filter[input]; ok {
-		loc := search(val, data)
-		if err := deleteElement(val, loc); err != nil {
-			return err
-		}
-		return nil
+		deleteElement(val, data)
+		return true
 	}
-	return errors.New("cannot delete element for some unknown reason")
+	return false
+}
+
+// fmt format
+func (cf *CuckooFilter) String() string {
+	if len(cf.Filter) == 0 {
+		return "nil filter"
+	}
+	output := ""
+	for k, v := range cf.Filter {
+		output += fmt.Sprintf("--------[%v]--------\nnode=[%v]\n", k, v.node)
+		output += "stash = ["
+		for i := v.stash.Front(); i != nil; i = i.Next() {
+			output += fmt.Sprintf("%v ", i.Value)
+		}
+		output += "]\n"
+	}
+	return output
 }

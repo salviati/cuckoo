@@ -17,6 +17,7 @@ package cuckoo
 
 // configurable variables (for tuning the algorithm)
 const (
-	stashSize     = 4   // Size of stash (see Kirsch, Adam, Michael Mitzenmacher, and Udi Wieder. "More robust hashing: Cuckoo hashing with a stash." SIAM Journal on Computing 39.4 (2009): 1543-1561.)
+	// now stashSize is a deprecation parameter
+	stashSize     = 0   // Size of stash
 	growParameter = 1.2 // the parameter determine how much more space we need to alloc based on the dataSize
 )

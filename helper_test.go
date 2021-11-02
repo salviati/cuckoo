@@ -1,54 +1,58 @@
 package cuckoo
 
 import (
+	"container/list"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
+func newElement() *bucket {
+	b := &bucket{
+		node:  byte(1),
+		stash: list.New(),
+	}
+	b.stash.PushBack(byte(2))
+	b.stash.PushBack(byte(3))
+	b.stash.PushBack(byte(4))
+	return b
+}
+
 func Test_deleteElement(t *testing.T) {
-	b := &bucket{byte(1), byte(2), byte(3), byte(4)}
-	err := deleteElement(b, 0)
-	assert.Nil(t, err)
+	b := newElement()
+	deleteElement(b, byte(2))
 
-	b = &bucket{byte(1), byte(2), byte(3), byte(4)}
-	err = deleteElement(b, -1)
-	assert.Nil(t, err)
+	b = newElement()
+	deleteElement(b, byte(1))
+	assert.Equal(t, nil, b.node)
 
-	b = &bucket{byte(1), byte(2), byte(3), byte(4)}
-	err = deleteElement(b, -2)
-	assert.NotNil(t, err)
+	b = newElement()
+	deleteElement(b, -1)
 }
 
 func Test_arrayAppend(t *testing.T) {
-	cf := NewCuckooFilter(1)
-	cf.Filter[0] = &bucket{[]byte{1}}
-	err := arrayAppend(cf.Filter[0], []byte("a"), cf)
-	assert.Nil(t, err)
+	cf := NewCuckooFilter(1, 0, [3]hashFunc{})
+	cf.Filter[0] = &bucket{node: byte(1), stash: list.New()}
+	ok := stashAppend(cf.Filter[0], []byte("a"), cf)
+	assert.True(t, ok)
 
-	cf = NewCuckooFilter(1)
-	cf.Filter[0] = &bucket{byte(1), byte(2), byte(3), byte(4)}
-	err = arrayAppend(cf.Filter[0], []byte("a"), cf)
-	assert.NotNil(t, err)
-}
-
-func Test_search(t *testing.T) {
-	b := &bucket{[]byte{1}, []byte{2}, []byte{3}, []byte{4}}
-	loc := search(b, []byte{1})
-	assert.Equal(t, loc, 0)
-
-	b = &bucket{[]byte{1}, []byte{2}, []byte{3}, []byte{4}}
-	loc = search(b, []byte{10})
-	assert.Equal(t, loc, -1)
+	cf = NewCuckooFilter(1, 0, [3]hashFunc{})
+	cf.Filter[0] = newElement()
+	cf.Filter[0].stash.PushBack(byte(5))
+	ok = stashAppend(cf.Filter[0], []byte("a"), cf)
+	assert.NotNil(t, ok)
 }
 
 func Test_convert(t *testing.T) {
-	_, err := convert("a")
-	assert.Nil(t, err)
+	res1, ok := convert("a")
+	assert.True(t, ok)
+	fmt.Println(res1)
 
-	_, err = convert([]byte{97})
-	assert.Nil(t, err)
+	res2, ok := convert([]byte{97})
+	assert.True(t, ok)
+	fmt.Println(res2)
 
-	_, err = convert(15)
-	assert.Nil(t, err)
+	_, ok = convert(15)
+	assert.True(t, ok)
 }
